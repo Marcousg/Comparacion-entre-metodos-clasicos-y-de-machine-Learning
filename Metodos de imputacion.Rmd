@@ -1,0 +1,408 @@
+---
+title: "Comparación entre métodos de imputación"
+author: "Marco Uriel Salgado Grijalva"
+date: "2026-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+#librerias
+library(nycflights13)
+library(mice)
+library(VIM)
+library(ggplot2)
+library(dplyr)
+#semilla
+set.seed(123)
+```
+#introducción
+Se hara una comparación entre los metodos de imputación de media, moda, mediana, regresión lineal, kNN, mice y Random Forest, para evaluar la eficacia de cada uno de estos.
+
+Se utilzará la base de datos de flights, que se encuentra en la libreria "nycflights13", la cual cuenta con varios datos faltantes, en diferentes columnas y con distribuciones de densidad lo suficientemete complicadas para para evaluar los modelos anteriormente mencionados.
+#Datos faltantes
+Para fines practicos se eliminaran las siguientes columnas:
+-sched dep time
+-sched arr time 
+-flight 
+-tailnum 
+-hour
+-minute
+-time hour\
+Ahora veamos cuales son los datos faltantes que podemos encontrar en nuestra base de datos.
+```{r cars}
+flights <- flights
+flights <- flights[,-c(5,8,11,12,17,18,19)] #columnas eliminadas
+
+md.pattern(flights,plot = TRUE, rotate.names = TRUE)
+```
+Como podemos observar, encontramos NA's en las variables dep_time, dep_delay, arr_time, arr_delay y air_time.
+#Metos de imputación
+Crearemos un dataframe con cada uno de los metodos.
+
+##Media
+```{r pressure, echo=FALSE}
+Imput_mean <- mice(flights,method="mean",
+                   print=T)
+
+Complete_mean <- mice::complete(Imput_mean)  
+```
+
+##Medina
+
+```{r}
+Complete_median <- flights
+
+#dep_time
+Complete_median$dep_time[is.na(Complete_median$dep_time)] <- median(Complete_median$dep_time, 
+                                                                      na.rm = TRUE)
+#dep_delay
+Complete_median$dep_delay[is.na(Complete_median$dep_delay)] <- median(Complete_median$dep_delay, 
+                                                                      na.rm = TRUE)
+#arr_time
+Complete_median$arr_time[is.na(Complete_median$arr_time)] <- median(Complete_median$arr_time, 
+                                                                        na.rm = TRUE)
+#arr_delay
+Complete_median$arr_delay[is.na(Complete_median$arr_delay)] <- median(Complete_median$arr_delay, 
+                                                                      na.rm = TRUE)
+#air_time
+Complete_median$air_time[is.na(Complete_median$air_time)] <- median(Complete_median$air_time, 
+                                                                        na.rm = TRUE)
+```
+
+##Moda
+```{r}
+Imput_mode <- mice(flights,
+                   method="cart",
+                   print=T,
+                   m = 1,
+                   maxit = 2) 
+
+Complete_mode <- mice::complete(Imput_mode)
+```
+
+##Regresion lineal
+```{r}
+Imput_reg <- mice(flights, 
+                   method = "norm.predict", 
+                   print = FALSE)
+
+Complete_reg <- mice::complete(Imput_reg)
+```
+
+##KNN
+```{r}
+#Volvemos factores a estas variables para eficientar el código
+flights$carrier <- as.factor(flights$carrier)
+flights$origin  <- as.factor(flights$origin)
+flights$dest    <- as.factor(flights$dest)
+
+#Creamos un submuestra de la orignial
+na_rows <- which(!complete.cases(flights))
+
+subset_flights <- flights[unique(c(
+  na_rows,
+  sample(which(complete.cases(flights)), 10000)
+)), ]
+
+#Ejecutamos KNN
+Complete_knn <- kNN(subset_flights,
+    variable = c(
+      "dep_time",
+      "dep_delay",
+      "arr_time",
+      "arr_delay",
+      "air_time"),
+    dist_var = c(
+      "month",
+      "day",
+      "origin",
+      "dest",
+      "distance"),
+    k = 1,
+    numFun = median,
+    imp_var = FALSE)
+```
+
+##mice
+```{r}
+imp_mice <- mice(flights, 
+                 m = 3, 
+                 maxit = 2, 
+                 method = 'pmm')
+
+Complete_mice <- complete(imp_mice, 1)
+```
+
+##Random Forest
+```{r}
+imp_rf <- mice(flights, m = 1, 
+               maxit = 2, 
+               method = 'rf', 
+               ntree = 10)
+Complete_rf <- mice::complete(imp_rf)
+```
+
+#Comparacion
+Ahora veremos por cada variable como se generaron los datos y que tanto discrepan los métodos, de los datos originales.
+
+##dep_time
+```{r}
+dep_time <- bind_rows(
+  data.frame(dep_time = na.omit(flights$dep_time),
+             Metodo = "Original"),
+  data.frame(dep_time = Complete_mean$dep_time,
+             Metodo = "Media"),
+  data.frame(dep_time = Complete_median$dep_time,
+             Metodo = "Mediana"),
+  data.frame(dep_time = Complete_mode$dep_time,
+             Metodo = "Moda"),
+  data.frame(dep_time = Complete_reg$dep_time,
+             Metodo = "Regresión"),
+  data.frame(dep_time = Complete_knn$dep_time,
+             Metodo = "kNN"),
+  data.frame(dep_time = Complete_mice$dep_time,
+             Metodo = "MICE"),
+  data.frame(dep_time = Complete_rf$dep_time,
+             Metodo = "Random Forest")
+)
+
+# Gráfica
+ggplot(dep_time, aes(x = dep_time, color = Metodo, linetype = Metodo)) +
+  geom_density(linewidth = 1.1, alpha = 0.8) +
+  labs(
+    title = "Distribuciones - dep_time",
+    x = "dep_time",
+    y = "Densidad",
+    color = "Método de imputación"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Original" = "steelblue3",
+      "Media" = "red3",
+      "Mediana" = "orange3",
+      "Moda" = "green3",
+      "Regresión" = "purple3",
+      "kNN" = "pink3",
+      "MICE" = "yellow3",
+      "Random Forest" = "gray50"
+    )) +
+  guides(linetype = "none") +
+  theme_minimal(base_size = 14)
+```
+En **dep_time** faltaban cerca del **2.45 %** de los datos. Su densidad presenta múltiples picos. La imputación mediante la **media** proporciona una aproximación aceptable, aunque sobreestima considerablemente la densidad alrededor de **1300**. De manera similar, la **mediana** genera una sobreestimación importante cerca de **1500**.
+
+Por su parte, la **moda** ofrece una de las mejores aproximaciones, junto con los métodos de **Random Forest (RF)** y **MICE**. La **regresión lineal simple** presenta una ligera sobreestimación alrededor de **1400**, aunque logra preservar adecuadamente la forma general de la distribución.
+
+Finalmente, **kNN** es el método que muestra el peor desempeño, ya que genera una densidad excesivamente suave y prácticamente elimina todos los picos observados en la distribución original. Esto probablemente se debe a que, durante la imputación, se utilizó únicamente un vecino. Sin embargo, emplear un mayor número de vecinos incrementaba considerablemente el tiempo de cómputo. Es posible que, con más tiempo de procesamiento y un mayor número de vecinos, kNN produjera una aproximación más precisa. Este comportamiento también se observará en las siguientes variables analizadas.
+
+##dep_delay
+```{r}
+dep_delay <- bind_rows(
+  data.frame(dep_delay = na.omit(flights$dep_delay),
+             Metodo = "Original"),
+  data.frame(dep_delay = Complete_mean$dep_delay,
+             Metodo = "Media"),
+  data.frame(dep_delay = Complete_median$dep_delay,
+             Metodo = "Mediana"),
+  data.frame(dep_delay = Complete_mode$dep_delay,
+             Metodo = "Moda"),
+  data.frame(dep_delay = Complete_reg$dep_delay,
+             Metodo = "Regresión"),
+  data.frame(dep_delay = Complete_knn$dep_delay,
+             Metodo = "kNN"),
+  data.frame(dep_delay = Complete_mice$dep_delay,
+             Metodo = "MICE"),
+  data.frame(dep_delay = Complete_rf$dep_delay,
+             Metodo = "Random Forest")
+)
+
+ggplot(dep_delay, aes(x = dep_delay, color = Metodo, linetype = Metodo)) +
+  geom_density(linewidth = 1.1, alpha = 0.8) +
+  coord_cartesian(xlim = c(-30, 50)) +
+  labs(
+    title = "Distribuciones - dep_delay",
+    x = "dep_delay",
+    y = "Densidad",
+    color = "Método de imputación"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Original" = "steelblue3",
+      "Media" = "red3",
+      "Mediana" = "orange3",
+      "Moda" = "green3",
+      "Regresión" = "purple3",
+      "kNN" = "pink3",
+      "MICE" = "yellow3",
+      "Random Forest" = "gray50"
+    )) +
+  guides(linetype = "none") +
+  theme_minimal(base_size = 14)
+```
+Esta densidad es más sencilla y presenta una forma cercana a una distribución normal. Aun así, la imputación mediante la **media** no proporciona una aproximación particularmente buena, ya que subestima el pico principal y genera una pequeña protuberancia alrededor del valor **10**.
+
+La **mediana** produce una distribución más similar a la original, aunque presenta una ligera sobreestimación. La **moda** ofrece una aproximación excelente, al igual que la **regresión lineal simple**, aunque esta última genera un pico atípico que no se observa en los datos originales.
+
+Los métodos **MICE** y **Random Forest (RF)** también logran aproximaciones sobresalientes, siendo **RF** ligeramente superior al reproducir con mayor precisión la forma de la distribución original.
+Por último, **kNN** muestra el peor desempeño entre los métodos evaluados, ya que subestima considerablemente la densidad en la región de mayor concentración de datos.
+
+##arr_time
+```{r}
+arr_time <- as.data.frame(bind_rows(
+  data.frame(arr_time = na.omit(flights$arr_time),
+             Metodo = "Original"),
+  data.frame(arr_time = Complete_mean$arr_time,
+             Metodo = "Media"),
+  data.frame(arr_time = Complete_median$arr_time,
+             Metodo = "Mediana"),
+  data.frame(arr_time = Complete_mode$arr_time,
+             Metodo = "Moda"),
+  data.frame(arr_time = Complete_reg$arr_time,
+             Metodo = "Regresión"),
+  data.frame(arr_time = Complete_knn$arr_time,
+             Metodo = "kNN"),
+  data.frame(arr_time = Complete_mice$arr_time,
+             Metodo = "MICE"),
+  data.frame(arr_time = Complete_rf$arr_time,
+             Metodo = "Random Forest")
+))
+
+ggplot(arr_time, aes(x = arr_time, color = Metodo, linetype = Metodo)) +
+  geom_density(linewidth = 1.1, alpha = 0.8) +
+  labs(
+    title = "Distribuciones - arr_time",
+    x = "arr_time",
+    y = "Densidad",
+    color = "Método de imputación"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Original" = "steelblue3",
+      "Media" = "red3",
+      "Mediana" = "orange3",
+      "Moda" = "green3",
+      "Regresión" = "purple3",
+      "kNN" = "pink3",
+      "MICE" = "yellow3",
+      "Random Forest" = "gray50"
+    )) +
+  guides(linetype = "none") +
+  theme_minimal(base_size = 14)
+```
+Al igual que en **dep_time**, esta densidad presenta múltiples picos. Los métodos de imputación mediante la **media** y la **mediana** generan aproximaciones aceptables; sin embargo, ambos crean un pico artificial alrededor de **1600**, lo que indica una sobreestimación de la densidad en esa región.
+
+Por otro lado, la **moda**, **MICE** y **Random Forest (RF)** producen distribuciones prácticamente idénticas a la original, reproduciendo de manera muy precisa su estructura y variabilidad.
+
+La **regresión lineal simple** también proporciona una buena aproximación, aunque presenta una ligera sobreestimación en algunas zonas de la distribución.
+
+Finalmente, **kNN** vuelve a ser el método con el desempeño más deficiente, ya que suaviza excesivamente la densidad y no logra conservar adecuadamente los múltiples picos presentes en los datos originales.
+
+##arr_delay
+```{r}
+arr_delay <- as.data.frame(bind_rows(
+  data.frame(arr_delay = na.omit(flights$arr_delay),
+             Metodo = "Original"),
+  data.frame(arr_delay = Complete_mean$arr_delay,
+             Metodo = "Media"),
+  data.frame(arr_delay = Complete_median$arr_delay,
+             Metodo = "Mediana"),
+  data.frame(arr_delay = Complete_mode$arr_delay,
+             Metodo = "Moda"),
+  data.frame(arr_delay = Complete_reg$arr_delay,
+             Metodo = "Regresión"),
+  data.frame(arr_delay = Complete_knn$arr_delay,
+             Metodo = "kNN"),
+  data.frame(arr_delay = Complete_mice$arr_delay,
+             Metodo = "MICE"),
+  data.frame(arr_delay = Complete_rf$arr_delay,
+             Metodo = "Random Forest")
+))
+
+ggplot(arr_delay, aes(x = arr_delay, color = Metodo, linetype = Metodo)) +
+  geom_density(linewidth = 1.1, alpha = 0.8) +
+  coord_cartesian(xlim = c(-50, 70)) +
+  labs(
+    title = "Distribuciones - arr_delay",
+    x = "arr_delay",
+    y = "Densidad",
+    color = "Método de imputación"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Original" = "steelblue3",
+      "Media" = "red3",
+      "Mediana" = "orange3",
+      "Moda" = "green3",
+      "Regresión" = "purple3",
+      "kNN" = "pink3",
+      "MICE" = "yellow3",
+      "Random Forest" = "gray50"
+    )) +
+  guides(linetype = "none") +
+  theme_minimal(base_size = 14)
+```
+La distribución de **arr_delay** presenta una forma cercana a la normalidad. Sin embargo, las imputaciones mediante la **media** y la **mediana** generan dos picos artificiales, lo que resulta en aproximaciones poco satisfactorias de la distribución original. Este comportamiento podría estar relacionado con el hecho de que esta variable presenta una proporción de datos faltantes cercana al **3 %** (aproximadamente **2.8 %**), superior a la observada en algunas de las variables analizadas previamente.
+
+La **regresión lineal simple** ofrece una aproximación excelente, probablemente debido a que la distribución de los datos se asemeja a una distribución normal, una situación en la que este método suele desempeñarse adecuadamente.
+
+De manera similar, la **moda**, **MICE** y **Random Forest (RF)** reproducen con gran precisión la densidad original, mostrando un desempeño sobresaliente.
+
+Por último, aunque **kNN** no alcanza el nivel de precisión de los mejores métodos, en este caso logra una aproximación aceptable y conserva razonablemente la forma general de la distribución, mostrando un mejor desempeño que el observado en variables anteriores.
+
+##air_time
+```{r}
+air_time <- as.data.frame(bind_rows(
+  data.frame(air_time = na.omit(flights$air_time),
+             Metodo = "Original"),
+  data.frame(air_time = Complete_mean$air_time,
+             Metodo = "Media"),
+  data.frame(air_time = Complete_median$air_time,
+             Metodo = "Mediana"),
+  data.frame(air_time = Complete_mode$air_time,
+             Metodo = "Moda"),
+  data.frame(air_time = Complete_reg$air_time,
+             Metodo = "Regresión"),
+  data.frame(air_time = Complete_knn$air_time,
+             Metodo = "kNN"),
+  data.frame(air_time = Complete_mice$air_time,
+             Metodo = "MICE"),
+  data.frame(air_time = Complete_rf$air_time,
+             Metodo = "Random Forest")
+))
+
+ggplot(air_time, aes(x = air_time, color = Metodo, linetype = Metodo)) +
+  geom_density(linewidth = 1.1, alpha = 0.8) +
+  labs(
+    title = "Distribuciones - air_time",
+    x = "air_time",
+    y = "Densidad",
+    color = "Método de imputación"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Original" = "steelblue3",
+      "Media" = "red3",
+      "Mediana" = "orange3",
+      "Moda" = "green3",
+      "Regresión" = "purple3",
+      "kNN" = "pink3",
+      "MICE" = "yellow3",
+      "Random Forest" = "gray50"
+    )) +
+  guides(linetype = "none") +
+  theme_minimal(base_size = 14)
+```
+Por último, se observa nuevamente una distribución con una forma compleja y alejada de la normalidad. En este caso, los métodos de imputación mediante la **media** y la **mediana** generan una sobreestimación de la densidad, produciendo dos picos artificiales que no están presentes en la distribución original.
+
+Por su parte, **kNN** logra reproducir la forma general de la densidad de manera aceptable; sin embargo, presenta varias regiones donde sobreestima la densidad y otras donde la subestima, lo que evidencia ciertas dificultades para capturar con precisión la estructura completa de los datos.
+
+En contraste, la **moda**, la **regresión lineal simple**, **MICE** y **Random Forest (RF)** replican prácticamente a la perfección la forma de la distribución original, conservando tanto sus picos como sus patrones de variación. Estos resultados sugieren que dichos métodos son más adecuados para preservar distribuciones complejas cuando se realiza la imputación de datos faltantes.
+
+#Conclusión
+A partir de los resultados obtenidos, se observa que los métodos de imputación basados en la **media** y la **mediana** tienden a alterar la forma original de las distribuciones, generando con frecuencia picos artificiales y regiones de sobreestimación que no estaban presentes en los datos originales. Por esta razón, aunque son métodos simples y de fácil implementación, su capacidad para preservar la estructura de los datos resulta limitada.
+
+La **regresión lineal simple** mostró un desempeño generalmente satisfactorio, produciendo aproximaciones razonables de las distribuciones originales. Su comportamiento fue especialmente favorable en aquellas variables cuya distribución presentaba una forma cercana a la normalidad, donde logró reproducir adecuadamente tanto la tendencia central como la estructura general de los datos.
+
+En el caso de **kNN**, los resultados fueron menos consistentes. En varias variables, este método tendió a suavizar excesivamente las densidades, reduciendo la presencia de picos y modificando características importantes de la distribución original. Sin embargo, este desempeño podría estar influenciado por las decisiones adoptadas para reducir los tiempos de cómputo. En particular, se utilizó un valor reducido de vecinos (*k*) y se trabajó con un subconjunto de los datos originales, lo que permitió disminuir considerablemente el tiempo de ejecución, pero posiblemente a costa de una menor precisión en las imputaciones. Por ello, no puede descartarse que una configuración más exigente en términos computacionales hubiera producido mejores resultados.
+
+Finalmente, los métodos basados en la **moda**, **MICE** (*Multivariate Imputation by Chained Equations*) y **Random Forest (RF)** fueron los que presentaron el mejor desempeño global. En la mayoría de las variables analizadas, estos métodos lograron preservar de manera muy precisa la forma de las distribuciones originales, reproduciendo adecuadamente sus picos, niveles de dispersión y patrones generales. Entre ellos, **MICE** y **Random Forest** destacaron por su consistencia a lo largo de todas las variables estudiadas, lo que sugiere que son las alternativas más robustas para la imputación de datos faltantes en este conjunto de datos.
